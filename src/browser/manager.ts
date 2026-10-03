@@ -3,7 +3,41 @@ import fs from 'fs';
 import path from 'path';
 import { log } from '../utils/logger.js';
 import { pageLoadDelay } from '../utils/delays.js';
-import type { Platform, BrowserConfig, Session } from '../types/index.js';
+import type { Platform, BrowserConfig, Session, CookieData } from '../types/index.js';
+
+/**
+ * Normalize a cookie from Playwright or cookie-editor extension formats
+ */
+function normalizeCookie(c: Record<string, unknown>): CookieData {
+  if (typeof c.name !== 'string' || typeof c.value !== 'string' || typeof c.domain !== 'string') {
+    throw new Error('Each cookie needs string name, value and domain');
+  }
+
+  const sameSiteMap: Record<string, CookieData['sameSite']> = {
+    strict: 'Strict',
+    lax: 'Lax',
+    none: 'None',
+    no_restriction: 'None',
+  };
+  const sameSite = typeof c.sameSite === 'string' ? sameSiteMap[c.sameSite.toLowerCase()] : undefined;
+  const expires =
+    typeof c.expires === 'number'
+      ? c.expires
+      : typeof c.expirationDate === 'number'
+        ? c.expirationDate
+        : -1;
+
+  return {
+    name: c.name,
+    value: c.value,
+    domain: c.domain,
+    path: typeof c.path === 'string' ? c.path : '/',
+    expires,
+    httpOnly: c.httpOnly === true,
+    secure: c.secure === true,
+    sameSite,
+  };
+}
 
 export class BrowserManager {
   private browser: Browser | null = null;
@@ -217,6 +251,52 @@ export class BrowserManager {
     const sessionPath = path.join(this.sessionDir, `${platform}.json`);
     fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
     log.info(`Session saved for ${platform}`);
+  }
+
+  /**
+   * Read the saved session file for a platform (null if none)
+   */
+  exportSession(platform: Platform): Session | null {
+    const sessionPath = path.join(this.sessionDir, `${platform}.json`);
+    if (!fs.existsSync(sessionPath)) {
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(sessionPath, 'utf-8')) as Session;
+  }
+
+  /**
+   * Import a session for a platform.
+   * Accepts a Session object, `{ cookies: [...] }`, or a raw cookie array
+   * (e.g. exported from a cookie editor browser extension).
+   */
+  async importSession(platform: Platform, data: unknown): Promise<Session> {
+    const raw = Array.isArray(data)
+      ? data
+      : (data as { cookies?: unknown })?.cookies;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      throw new Error('No cookies found in session data');
+    }
+
+    const now = Date.now();
+    const existing = data as Partial<Session>;
+    const session: Session = {
+      platform,
+      cookies: raw.map((c) => normalizeCookie(c as Record<string, unknown>)),
+      localStorage: Array.isArray(data) ? {} : existing.localStorage || {},
+      createdAt: Array.isArray(data) ? now : existing.createdAt || now,
+      updatedAt: Array.isArray(data) ? now : existing.updatedAt || now,
+    };
+
+    const sessionPath = path.join(this.sessionDir, `${platform}.json`);
+    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
+
+    // Drop the live context so the next action restores from the new session
+    if (this.contexts.has(platform)) {
+      await this.closeContext(platform);
+    }
+
+    log.info(`Session imported for ${platform}`, { cookies: session.cookies.length });
+    return session;
   }
 
   /**

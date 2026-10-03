@@ -199,6 +199,21 @@ export class RateLimiter {
     }
   }
 
+  /**
+   * Snapshot of recorded actions (for external persistence)
+   */
+  exportState(): RateLimitStore {
+    return this.store;
+  }
+
+  /**
+   * Replace recorded actions with an external snapshot and persist it
+   */
+  async importState(store: RateLimitStore): Promise<void> {
+    this.store = store;
+    await this.persist();
+  }
+
   private load(): void {
     try {
       if (fs.existsSync(this.persistPath)) {

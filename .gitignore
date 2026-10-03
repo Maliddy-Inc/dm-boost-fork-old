@@ -67,3 +67,10 @@ src/scraped/
 scripts/*.py
 scripts/linkedin-*.ts
 new_search.html\nx-comments.txt
+
+# Cloudflare / Terraform
+.dev.vars
+.wrangler/
+.terraform/
+*.tfstate
+*.tfstate.*

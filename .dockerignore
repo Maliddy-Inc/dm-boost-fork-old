@@ -1,0 +1,11 @@
+node_modules
+dist
+cloudflare
+.git
+.github
+.env
+.env.*
+.dev.vars
+sessions
+browser-data
+logs

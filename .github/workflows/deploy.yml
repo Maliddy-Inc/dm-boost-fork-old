@@ -1,0 +1,142 @@
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cloudflare/package-lock.json
+
+      - name: Build app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Typecheck Worker
+        working-directory: cloudflare
+        run: |
+          npm ci
+          npm run typecheck
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Validate Terraform
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check
+          terraform init -backend=false
+          terraform validate
+
+      - name: Build container image
+        if: github.event_name == 'pull_request'
+        run: docker build --platform linux/amd64 -t dm-boost:ci .
+
+  terraform:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_custom_domain: ${{ vars.CUSTOM_DOMAIN }}
+      TF_VAR_zone_id: ${{ vars.ZONE_ID }}
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      # R2 S3 credentials derived from the API token:
+      # access key = token ID, secret = SHA-256 of the token value
+      - name: Configure R2 state credentials
+        run: |
+          api=https://api.cloudflare.com/client/v4
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          token_id=$(curl -fsS -H "$auth" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq -r '.result.id // empty' || true)
+          if [ -z "$token_id" ]; then
+            token_id=$(curl -fsS -H "$auth" "$api/user/tokens/verify" | jq -r '.result.id // empty')
+          fi
+          [ -n "$token_id" ] || { echo "Could not verify CLOUDFLARE_API_TOKEN"; exit 1; }
+          secret=$(printf %s "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
+          echo "::add-mask::$token_id"
+          echo "::add-mask::$secret"
+          echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config="endpoints={s3=\"https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com\"}"
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve
+
+  deploy:
+    needs: terraform
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - run: npm ci
+
+      # Only non-empty secrets are uploaded; omitted ones are kept as-is on Cloudflare
+      - name: Prepare Worker secrets
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
+          TWITTER_USERNAME: ${{ secrets.TWITTER_USERNAME }}
+          TWITTER_PASSWORD: ${{ secrets.TWITTER_PASSWORD }}
+          LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+        run: |
+          node -e '
+            const keys = ["API_KEY", "INSTAGRAM_USERNAME", "INSTAGRAM_PASSWORD", "TWITTER_USERNAME",
+              "TWITTER_PASSWORD", "LINKEDIN_EMAIL", "LINKEDIN_PASSWORD"];
+            const out = Object.fromEntries(keys.filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
+            if (!out.API_KEY) { console.error("API_KEY secret is required"); process.exit(1); }
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/secrets.json", JSON.stringify(out));
+            console.log("Uploading secrets:", Object.keys(out).join(", "));
+          '
+
+      - name: Deploy Worker + container
+        run: npx wrangler deploy --secrets-file "$RUNNER_TEMP/secrets.json"
+
+      - name: Remove secrets file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/secrets.json"

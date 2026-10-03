@@ -9,7 +9,13 @@ import { initLogger, log } from './utils/logger.js';
 import { configureDelays } from './utils/delays.js';
 import { loadConfig } from './utils/config.js';
 import { Notifier, initNotifier } from './services/notifier.js';
-import type { SocialCrabsConfig, Platform, RateLimitStatus, ServerConfig, BrowserConfig, RateLimitConfig, DelayConfig, SessionConfig, LoggingConfig, NotificationConfig } from './types/index.js';
+import type { SocialCrabsConfig, Platform, RateLimitStatus, ServerConfig, BrowserConfig, RateLimitConfig, DelayConfig, SessionConfig, LoggingConfig, NotificationConfig, Session } from './types/index.js';
+import { PLATFORMS } from './types/index.js';
+
+export interface PersistedState {
+  sessions: Partial<Record<Platform, Session>>;
+  rateLimits: ReturnType<RateLimiter['exportState']>;
+}
 
 interface ResolvedConfig {
   server: ServerConfig;
@@ -201,6 +207,63 @@ export class SocialCrabs {
       default:
         throw new Error(`Unknown platform: ${platform}`);
     }
+  }
+
+  /**
+   * Whether the browser runs headless (interactive login is impossible)
+   */
+  get headless(): boolean {
+    return this.config.browser.headless;
+  }
+
+  /**
+   * Export the saved session for a platform
+   */
+  exportSession(platform: Platform): Session | null {
+    return this.browserManager.exportSession(platform);
+  }
+
+  /**
+   * Import a session (cookies) for a platform
+   */
+  async importSession(platform: Platform, data: unknown): Promise<Session> {
+    return this.browserManager.importSession(platform, data);
+  }
+
+  /**
+   * Export all persistent state (sessions + rate limit history)
+   */
+  exportState(): PersistedState {
+    const sessions: PersistedState['sessions'] = {};
+    for (const platform of PLATFORMS) {
+      const session = this.browserManager.exportSession(platform);
+      if (session) {
+        sessions[platform] = session;
+      }
+    }
+    return { sessions, rateLimits: this.rateLimiter.exportState() };
+  }
+
+  /**
+   * Restore persistent state exported by exportState()
+   */
+  async importState(state: Partial<PersistedState>): Promise<void> {
+    for (const platform of PLATFORMS) {
+      const session = state.sessions?.[platform];
+      if (session) {
+        await this.browserManager.importSession(platform, session);
+      }
+    }
+    if (state.rateLimits) {
+      await this.rateLimiter.importState(state.rateLimits);
+    }
+  }
+
+  /**
+   * Take a screenshot of the current page for a platform
+   */
+  async screenshot(platform: Platform): Promise<Buffer> {
+    return this.browserManager.screenshot(platform);
   }
 
   /**

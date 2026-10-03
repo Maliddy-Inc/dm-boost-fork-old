@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dm-boost",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Account comes from CLOUDFLARE_ACCOUNT_ID. The Worker itself is created by
+  // Terraform (infra/terraform); keep these settings in sync with it.
+  "workers_dev": true,
+  "observability": { "enabled": true },
+
+  // Web UI served directly by the Worker (does not wake the container)
+  "assets": { "directory": "../public" },
+
+  "containers": [
+    {
+      "class_name": "DmBoostContainer",
+      "image": "../Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "DM_BOOST", "class_name": "DmBoostContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DmBoostContainer"] }]
+}
