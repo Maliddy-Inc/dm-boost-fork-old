@@ -6,6 +6,8 @@ import type { Page, BrowserContext } from 'playwright';
 
 export type Platform = 'instagram' | 'twitter' | 'linkedin';
 
+export const PLATFORMS: Platform[] = ['instagram', 'twitter', 'linkedin'];
+
 export type ActionType =
   | 'like'
   | 'comment'

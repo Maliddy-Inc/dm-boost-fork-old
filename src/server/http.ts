@@ -1,15 +1,29 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
 import { log } from '../utils/logger.js';
+import { PLATFORMS } from '../types/index.js';
 import type { SocialCrabs } from '../index.js';
 import type { Platform } from '../types/index.js';
+
+// Web UI lives in <repo>/public (works from both src/ and dist/)
+const PUBLIC_DIR = path.resolve(__dirname, '../../public');
+
+function parsePlatform(req: Request, res: Response): Platform | null {
+  const platform = req.params.platform as Platform;
+  if (!PLATFORMS.includes(platform)) {
+    res.status(400).json({ error: `Unknown platform: ${platform}` });
+    return null;
+  }
+  return platform;
+}
 
 export function createHttpServer(socialCrabs: SocialCrabs, apiKey?: string) {
   const app = express();
 
   // Middleware
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
 
   // API Key authentication middleware
   const authenticate = (req: Request, res: Response, next: NextFunction): void => {
@@ -36,6 +50,9 @@ export function createHttpServer(socialCrabs: SocialCrabs, apiKey?: string) {
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
+
+  // Web UI (static, no auth; the UI sends the API key with each request)
+  app.use(express.static(PUBLIC_DIR));
 
   // Apply authentication to all other routes
   app.use(authenticate);
@@ -71,12 +88,83 @@ export function createHttpServer(socialCrabs: SocialCrabs, apiKey?: string) {
 
   app.post('/api/session/login/:platform', async (req: Request, res: Response) => {
     try {
-      const platform = req.params.platform as Platform;
+      const platform = parsePlatform(req, res);
+      if (!platform) return;
+
+      // Credentials from the request body, falling back to env (same as the CLI)
+      const envPrefix = platform.toUpperCase();
+      const username =
+        req.body?.username || process.env[`${envPrefix}_USERNAME`] || process.env[`${envPrefix}_EMAIL`];
+      const password = req.body?.password || process.env[`${envPrefix}_PASSWORD`];
+
       log.info(`Login request for ${platform}`);
-      const success = await socialCrabs.login(platform);
+      let success: boolean;
+      if (username && password) {
+        success = await socialCrabs.loginWithCredentials(platform, username, password);
+      } else if (socialCrabs.headless) {
+        res.status(400).json({
+          error: `Headless login requires credentials (body or ${envPrefix}_USERNAME/${envPrefix}_PASSWORD env). Alternatively import cookies.`,
+        });
+        return;
+      } else {
+        success = await socialCrabs.login(platform);
+      }
       res.json({ platform, success });
     } catch (error) {
       log.error('Error logging in', { error: String(error) });
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get('/api/session/export/:platform', (req: Request, res: Response) => {
+    const platform = parsePlatform(req, res);
+    if (!platform) return;
+    const session = socialCrabs.exportSession(platform);
+    if (!session) {
+      res.status(404).json({ error: `No saved session for ${platform}` });
+      return;
+    }
+    res.json(session);
+  });
+
+  app.put('/api/session/import/:platform', async (req: Request, res: Response) => {
+    try {
+      const platform = parsePlatform(req, res);
+      if (!platform) return;
+      const session = await socialCrabs.importSession(platform, req.body);
+      res.json({ platform, success: true, cookies: session.cookies.length });
+    } catch (error) {
+      log.error('Error importing session', { error: String(error) });
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  // ============================================================================
+  // Persistent state (sessions + rate limits), used by the Cloudflare wrapper
+  // ============================================================================
+
+  app.get('/api/state', (_req: Request, res: Response) => {
+    res.json(socialCrabs.exportState());
+  });
+
+  app.put('/api/state', async (req: Request, res: Response) => {
+    try {
+      await socialCrabs.importState(req.body);
+      res.json({ success: true });
+    } catch (error) {
+      log.error('Error importing state', { error: String(error) });
+      res.status(400).json({ error: String(error) });
+    }
+  });
+
+  app.get('/api/screenshot/:platform', async (req: Request, res: Response) => {
+    try {
+      const platform = parsePlatform(req, res);
+      if (!platform) return;
+      const png = await socialCrabs.screenshot(platform);
+      res.type('png').send(png);
+    } catch (error) {
+      log.error('Error taking screenshot', { error: String(error) });
       res.status(500).json({ error: String(error) });
     }
   });

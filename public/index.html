@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DM Boost</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7385; --border: #e2e5eb;
+    --accent: #2f6fed; --accent-text: #fff; --ok: #1a8a4a; --ng: #c63a3a; --warn: #b7791f;
+    --code-bg: #f1f3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #9aa2b2; --border: #2b313c;
+      --accent: #5b8cff; --accent-text: #0d1117; --ok: #3ccf7c; --ng: #ff6b6b; --warn: #f2b34b;
+      --code-bg: #0f1217;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 1; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .key { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  header .key input { width: 220px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } header { flex-wrap: wrap; } header .key { margin-left: 0; width: 100%; } header .key input { flex: 1; width: auto; } }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  h2 .hint { font-weight: normal; color: var(--muted); font-size: 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select, textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: progress; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .ng { color: var(--ng); } .warn { color: var(--warn); } .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: normal; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  #log { max-height: 420px; overflow: auto; display: grid; gap: 8px; }
+  .entry { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .entry .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; }
+  .entry pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; background: var(--code-bg); padding: 8px; border-radius: 4px; }
+  #shot img { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }
+  .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DM Boost</h1>
+  <span id="conn" class="pill muted">未接続</span>
+  <div class="key">
+    <input id="apiKey" type="password" placeholder="API Key" autocomplete="off">
+    <button id="saveKey">保存</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2>ステータス <span class="hint">各サイトを開いてログイン確認するため数十秒かかります</span></h2>
+    <div id="status" class="muted">未取得</div>
+    <div class="row"><button id="refreshStatus" class="primary">ステータス取得</button></div>
+  </section>
+
+  <section>
+    <h2>セッション</h2>
+    <div class="tabs" id="sessionTabs"></div>
+    <div id="sessionInfo" class="muted"></div>
+
+    <label>ユーザー名 / メール（空欄ならサーバーの環境変数を使用）</label>
+    <input id="loginUser" autocomplete="off">
+    <label>パスワード</label>
+    <input id="loginPass" type="password" autocomplete="new-password">
+    <div class="row">
+      <button id="loginBtn" class="primary">ログイン</button>
+      <button id="logoutBtn">ログアウト</button>
+      <button id="shotBtn">スクリーンショット</button>
+    </div>
+
+    <details id="cookieBox">
+      <summary>Cookieをインポート（データセンターIPからのログインを避けたい場合におすすめ）</summary>
+      <div id="twitterQuick" hidden>
+        <label>auth_token</label><input id="twAuth" autocomplete="off">
+        <label>ct0</label><input id="twCt0" autocomplete="off">
+      </div>
+      <label>Cookie JSON（Cookie-Editor等のエクスポート配列、またはセッションJSON）</label>
+      <textarea id="cookieJson" placeholder='[{"name":"sessionid","value":"...","domain":".instagram.com", ...}]'></textarea>
+      <div class="row"><button id="importBtn">インポート</button></div>
+    </details>
+    <div id="shot"></div>
+  </section>
+
+  <section class="wide">
+    <h2>アクション <span class="hint">人間らしい待機時間を挟むので1件あたり数分かかることがあります</span></h2>
+    <div class="tabs" id="actionTabs"></div>
+    <label>操作</label>
+    <select id="actionSelect"></select>
+    <div id="actionFields"></div>
+    <div class="row"><button id="runAction" class="primary">実行</button></div>
+  </section>
+
+  <section class="wide">
+    <h2>ログ</h2>
+    <div id="log"><div class="muted">まだ何も実行していません</div></div>
+  </section>
+</main>
+
+<script>
+const PLATFORMS = { instagram: 'Instagram', twitter: 'X (Twitter)', linkedin: 'LinkedIn' };
+const F = {
+  url: { name: 'url', label: '投稿URL' },
+  text: { name: 'text', label: 'テキスト', multiline: true },
+  username: { name: 'username', label: 'ユーザー名' },
+  message: { name: 'message', label: 'メッセージ', multiline: true },
+};
+const ACTIONS = {
+  instagram: [
+    { id: 'dm', label: 'DM送信', fields: [F.username, F.message] },
+    { id: 'like', label: 'いいね', fields: [F.url] },
+    { id: 'comment', label: 'コメント', fields: [F.url, F.text] },
+    { id: 'follow', label: 'フォロー', fields: [F.username] },
+    { id: 'unfollow', label: 'フォロー解除', fields: [F.username] },
+    { id: 'profile', label: 'プロフィール取得', fields: [F.username], get: true },
+  ],
+  twitter: [
+    { id: 'tweet', label: 'ポスト', fields: [F.text] },
+    { id: 'reply', label: 'リプライ', fields: [F.url, F.text] },
+    { id: 'like', label: 'いいね', fields: [F.url] },
+    { id: 'retweet', label: 'リポスト', fields: [F.url] },
+    { id: 'follow', label: 'フォロー', fields: [F.username] },
+    { id: 'dm', label: 'DM送信（未対応の可能性あり）', fields: [F.username, F.message] },
+    { id: 'profile', label: 'プロフィール取得', fields: [F.username], get: true },
+  ],
+  linkedin: [
+    { id: 'message', label: 'メッセージ送信', fields: [F.username, F.message] },
+    { id: 'connect', label: 'つながり申請', fields: [{ name: 'profileUrl', label: 'プロフィールURL' }, { name: 'note', label: 'メモ（任意）', multiline: true, optional: true }] },
+    { id: 'like', label: 'いいね', fields: [F.url] },
+    { id: 'comment', label: 'コメント', fields: [F.url, F.text] },
+    { id: 'profile', label: 'プロフィール取得', fields: [F.username], get: true },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+let sessionPlatform = 'instagram';
+let actionPlatform = 'instagram';
+
+$('apiKey').value = store.get('dmboost.apiKey') || '';
+$('saveKey').onclick = () => { store.set('dmboost.apiKey', $('apiKey').value.trim()); checkConn(); };
+
+async function api(method, path, body, { raw } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'x-api-key': $('apiKey').value.trim(), ...(body ? { 'content-type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (raw && res.ok) return res;
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!res.ok) throw Object.assign(new Error(data?.error || res.statusText), { status: res.status, data });
+  return data;
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function addLog(title, ok, data, ms) {
+  const box = $('log');
+  if (box.firstElementChild?.classList.contains('muted')) box.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'entry';
+  el.innerHTML = `<div class="meta"><span class="${ok ? 'ok' : 'ng'}">${ok ? '成功' : '失敗'}</span><span>${esc(title)}</span><span>${new Date().toLocaleTimeString()}</span>${ms != null ? `<span>${(ms / 1000).toFixed(1)}秒</span>` : ''}</div><pre>${esc(typeof data === 'string' ? data : JSON.stringify(data, null, 2))}</pre>`;
+  box.prepend(el);
+}
+
+async function run(btn, title, fn) {
+  btn.disabled = true;
+  const label = btn.textContent;
+  const t0 = Date.now();
+  const timer = setInterval(() => { btn.textContent = `${label}…${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
+  try {
+    const data = await fn();
+    addLog(title, data?.success !== false, data, Date.now() - t0);
+    return data;
+  } catch (e) {
+    addLog(title, false, e.data || e.message, Date.now() - t0);
+    if (e.status === 401) setConn(false, 'APIキーが違います');
+  } finally {
+    clearInterval(timer);
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+}
+
+function setConn(ok, text) {
+  $('conn').className = `pill ${ok ? 'ok' : 'ng'}`;
+  $('conn').textContent = text;
+}
+
+async function checkConn() {
+  try {
+    await api('GET', '/health');
+    // Light authenticated call to validate the key
+    await api('GET', '/api/session/export/instagram').catch((e) => { if (e.status !== 404) throw e; });
+    setConn(true, '接続OK');
+    loadSessionInfo();
+  } catch (e) {
+    setConn(false, e.status === 401 ? 'APIキーが違います' : '接続エラー');
+  }
+}
+
+function tabs(container, current, onSelect) {
+  container.innerHTML = '';
+  for (const [id, name] of Object.entries(PLATFORMS)) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.className = id === current ? 'active' : '';
+    b.onclick = () => onSelect(id);
+    container.appendChild(b);
+  }
+}
+
+// ---------------- Status ----------------
+$('refreshStatus').onclick = () => run($('refreshStatus'), 'ステータス取得', async () => {
+  const s = await api('GET', '/api/status');
+  let html = `<div>ブラウザ: <span class="${s.browser ? 'ok' : 'ng'}">${s.browser ? '起動中' : '停止'}</span>　稼働時間: ${Math.round(s.uptime / 60)}分</div>`;
+  html += '<table><tr><th>サービス</th><th>ログイン</th><th>本日の残り回数</th></tr>';
+  for (const [p, v] of Object.entries(s.platforms)) {
+    const limits = Object.entries(v.rateLimits || {}).map(([k, r]) => `${k} ${r.remaining}/${r.limit}`).join('　');
+    html += `<tr><td>${PLATFORMS[p] || p}</td><td class="${v.loggedIn ? 'ok' : 'ng'}">${v.loggedIn ? 'ログイン済' : '未ログイン'}</td><td class="muted">${esc(limits)}</td></tr>`;
+  }
+  $('status').className = '';
+  $('status').innerHTML = html + '</table>';
+  return { browser: s.browser, loggedIn: Object.fromEntries(Object.entries(s.platforms).map(([p, v]) => [p, v.loggedIn])) };
+});
+
+// ---------------- Sessions ----------------
+function selectSession(p) {
+  sessionPlatform = p;
+  tabs($('sessionTabs'), p, selectSession);
+  $('twitterQuick').hidden = p !== 'twitter';
+  $('shot').innerHTML = '';
+  loadSessionInfo();
+}
+
+async function loadSessionInfo() {
+  const p = sessionPlatform;
+  try {
+    const s = await api('GET', `/api/session/export/${p}`);
+    $('sessionInfo').innerHTML = `<span class="ok">保存済みセッションあり</span> — Cookie ${s.cookies.length}件・更新 ${new Date(s.updatedAt).toLocaleString()}`;
+  } catch (e) {
+    $('sessionInfo').innerHTML = e.status === 404 ? '<span class="warn">保存済みセッションなし</span>' : `<span class="ng">${esc(e.message)}</span>`;
+  }
+}
+
+$('loginBtn').onclick = () => run($('loginBtn'), `${PLATFORMS[sessionPlatform]} ログイン`, async () => {
+  const body = {};
+  if ($('loginUser').value.trim()) body.username = $('loginUser').value.trim();
+  if ($('loginPass').value) body.password = $('loginPass').value;
+  const r = await api('POST', `/api/session/login/${sessionPlatform}`, body);
+  $('loginPass').value = '';
+  loadSessionInfo();
+  return r;
+});
+
+$('logoutBtn').onclick = () => {
+  if (!confirm(`${PLATFORMS[sessionPlatform]} からログアウトしますか？`)) return;
+  run($('logoutBtn'), `${PLATFORMS[sessionPlatform]} ログアウト`, async () => {
+    const r = await api('POST', `/api/session/logout/${sessionPlatform}`);
+    loadSessionInfo();
+    return r;
+  });
+};
+
+$('importBtn').onclick = () => run($('importBtn'), `${PLATFORMS[sessionPlatform]} Cookieインポート`, async () => {
+  let payload;
+  const json = $('cookieJson').value.trim();
+  if (json) {
+    payload = JSON.parse(json);
+  } else if (sessionPlatform === 'twitter' && $('twAuth').value.trim() && $('twCt0').value.trim()) {
+    const exp = Math.floor(Date.now() / 1000) + 180 * 86400;
+    payload = [
+      { name: 'auth_token', value: $('twAuth').value.trim(), domain: '.x.com', path: '/', expires: exp, httpOnly: true, secure: true, sameSite: 'None' },
+      { name: 'ct0', value: $('twCt0').value.trim(), domain: '.x.com', path: '/', expires: exp, secure: true, sameSite: 'Lax' },
+    ];
+  } else {
+    throw new Error('Cookie JSONを入力してください');
+  }
+  const r = await api('PUT', `/api/session/import/${sessionPlatform}`, payload);
+  $('cookieJson').value = ''; $('twAuth').value = ''; $('twCt0').value = '';
+  loadSessionInfo();
+  return r;
+});
+
+$('shotBtn').onclick = () => run($('shotBtn'), `${PLATFORMS[sessionPlatform]} スクリーンショット`, async () => {
+  const res = await api('GET', `/api/screenshot/${sessionPlatform}`, null, { raw: true });
+  const url = URL.createObjectURL(await res.blob());
+  $('shot').innerHTML = `<img alt="screenshot" src="${url}">`;
+  return 'スクリーンショットを表示しました';
+});
+
+// ---------------- Actions ----------------
+function selectAction(p) {
+  actionPlatform = p;
+  tabs($('actionTabs'), p, selectAction);
+  $('actionSelect').innerHTML = ACTIONS[p].map((a) => `<option value="${a.id}">${esc(a.label)}</option>`).join('');
+  renderFields();
+}
+
+function currentAction() { return ACTIONS[actionPlatform].find((a) => a.id === $('actionSelect').value); }
+
+function renderFields() {
+  $('actionFields').innerHTML = currentAction().fields.map((f) =>
+    `<label>${esc(f.label)}</label>${f.multiline ? `<textarea data-f="${f.name}"></textarea>` : `<input data-f="${f.name}" autocomplete="off">`}`
+  ).join('');
+}
+$('actionSelect').onchange = renderFields;
+
+$('runAction').onclick = () => {
+  const a = currentAction();
+  const body = {};
+  for (const el of $('actionFields').querySelectorAll('[data-f]')) {
+    const v = el.value.trim();
+    const f = a.fields.find((x) => x.name === el.dataset.f);
+    if (!v && !f.optional) { alert(`${f.label}を入力してください`); return; }
+    if (v) body[el.dataset.f] = v;
+  }
+  const title = `${PLATFORMS[actionPlatform]} ${a.label}`;
+  run($('runAction'), title, () => a.get
+    ? api('GET', `/api/${actionPlatform}/profile/${encodeURIComponent(body.username.replace(/^@/, ''))}`)
+    : api('POST', `/api/${actionPlatform}/${a.id}`, body));
+};
+
+selectSession('instagram');
+selectAction('instagram');
+checkConn();
+</script>
+</body>
+</html>
